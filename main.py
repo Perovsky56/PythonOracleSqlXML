@@ -7,38 +7,7 @@ import datetime
 import os
 
 
-def get_default_import_file_path():
-    default_folder = os.getcwd()
-    return default_folder
-
-
-# Tworzenie okna logowania
-def create_login_window():
-    login_window = tk.Tk()
-    login_window.title("Logowanie")
-    login_window.geometry("250x200")
-
-    style = ttk.Style()
-    style.configure("TButton", font=("Arial", 12))
-
-    main_text = tk.Label(login_window, text=f"ORACLE SQL - XML IMP/EXP (v1.0)\n"
-                         f"Auth: Paweł Siemiginowski\n"
-                         f"s101450")
-    main_text.pack(pady=10)
-    password_label = tk.Label(login_window, text="Wprowadź hasło:")
-    password_label.pack()
-
-    password_entry = tk.Entry(login_window, show="*")
-    password_entry.pack(pady=10)
-
-    login_button = ttk.Button(login_window, text="Zaloguj",
-                             command=lambda: connect_to_database(login_window, password_entry.get()))
-    login_button.pack()
-
-    login_window.mainloop()
-
-
-# Łączenie z bazą danych Oracle SQL
+# POŁĄCZENIE ORACLE SQL
 def connect_to_database(login_window, password):
     user = "s101450"
     host = "217.173.198.135"
@@ -54,97 +23,14 @@ def connect_to_database(login_window, password):
         messagebox.showerror("Błąd", "Wystąpił błąd podczas nawiązywania połączenia: " + str(e))
 
 
-# Wyłączanie ograniczeń integralności dla tabeli
-def disable_constraints(connection, table_name):
-    cursor = connection.cursor()
-    try:
-        # Pobierz nazwy ograniczeń dla tabeli
-        cursor.execute("SELECT constraint_name FROM user_constraints WHERE table_name = :table_name", {"table_name": table_name})
-        constraint_names = [row[0] for row in cursor.fetchall()]
-
-        # Wyłącz tymczasowo wszystkie ograniczenia i usuń zależne obiekty
-        for constraint_name in constraint_names:
-            # Usuń klucze obce zależne od ograniczenia
-            cursor.execute("SELECT table_name, constraint_name FROM user_constraints WHERE r_constraint_name = :constraint_name", {"constraint_name": constraint_name})
-            dependent_constraints = cursor.fetchall()
-
-            for dependent_table, dependent_constraint in dependent_constraints:
-                cursor.execute("ALTER TABLE " + dependent_table + " DROP CONSTRAINT " + dependent_constraint)
-
-            # Wyłącz indeksy zależne od ograniczenia
-            cursor.execute("SELECT index_name FROM user_constraints WHERE table_name = :table_name AND constraint_name = :constraint_name", {"table_name": table_name, "constraint_name": constraint_name})
-            index_names = [row[0] for row in cursor.fetchall()]
-
-            for index_name in index_names:
-                if index_name is not None:
-                    # Wyłącz indeks
-                    cursor.execute("ALTER INDEX " + index_name + " UNUSABLE")
-
-            # Wyłącz ograniczenie
-            cursor.execute("ALTER TABLE " + table_name + " DISABLE CONSTRAINT " + constraint_name + " CASCADE")
-
-        connection.commit()
-    except oracledb.DatabaseError as e:
-        connection.rollback()
-        raise e
-    finally:
-        cursor.close()
-
-
-# Włączanie ograniczeń integralności dla tabeli
-def enable_constraints(connection, table_name):
-    cursor = connection.cursor()
-    try:
-        # Pobierz nazwy ograniczeń dla tabeli
-        cursor.execute("SELECT constraint_name FROM user_constraints WHERE table_name = :table_name",
-                       {"table_name": table_name})
-        constraint_names = [row[0] for row in cursor.fetchall()]
-
-        # Włączaj ograniczenia po nazwie
-        for constraint_name in constraint_names:
-            cursor.execute("ALTER TABLE " + table_name + " ENABLE CONSTRAINT " + constraint_name)
-
-        connection.commit()
-    except oracledb.DatabaseError as e:
-        connection.rollback()
-        raise e
-    finally:
-        cursor.close()
-
-
-# Obsługa kliknięcia na element listy
-def listbox_click(event):
-    selected_indices = table_listbox.curselection()
-
-    if selected_indices:
-        # Zaznacz wybrany element na niebiesko
-        table_listbox.selection_clear(0, tk.END)  # Odznacz wszystkie wcześniej zaznaczone elementy
-        for index in selected_indices:
-            table_listbox.selection_set(index)
-
-    update_button_state()
-
-
-# Aktualizacja stanu przycisków Import i Export
-def update_button_state():
-    selected_indices = table_listbox.curselection()
-
-    if selected_indices:
-        export_button.config(state=tk.NORMAL)
-        import_button.config(state=tk.NORMAL)
-    else:
-        import_button.config(state=tk.DISABLED)
-        export_button.config(state=tk.DISABLED)
-
-
-# Eksportowanie tabeli do XML
-def export_table_to_xml(table_name, root, connection):
+# EXPORT TABEL DO XML
+def export_table(table_name, root, connection):
     cursor = connection.cursor()
     try:
         cursor.execute("SELECT * FROM " + table_name)
         rows = cursor.fetchall()
 
-        table_element = ET.SubElement(root, table_name)  # Create an element for the table
+        table_element = ET.SubElement(root, table_name)
 
         for row in rows:
             row_element = ET.SubElement(table_element, "row")
@@ -168,9 +54,9 @@ def export_table_to_xml(table_name, root, connection):
         cursor.close()
 
 
-# Importowanie tabel z pliku XML
-def import_tables_from_xml(file_path, connection):
-    imported_tables = []  # Inicjalizacja pustej listy zaimportowanych tabel
+# IMPORT TABEL Z XML
+def import_tables(file_path, connection):
+    imported_tables = []
 
     try:
         tree = ET.parse(file_path)
@@ -200,16 +86,15 @@ def import_tables_from_xml(file_path, connection):
     except oracledb.DatabaseError as e:
         messagebox.showerror("Błąd", "Wystąpił błąd podczas importowania tabel: " + str(e))
 
-    return imported_tables  # Zwracanie listy zaimportowanych tabel
+    return imported_tables
 
 
-
-# Importowanie pojedynczej tabeli z elementu XML
+# IMPORT JEDNEJ TABELI Z XML
 def import_table(table_name, table_element, connection):
     cursor = connection.cursor()
     try:
-        disable_constraints(connection, table_name)  # Wyłączanie ograniczeń integralności przed impor
-        cursor.execute("DELETE FROM " + table_name)  # Usunięcie istniejących danych z tabeli
+        disable_constraints(connection, table_name)
+        cursor.execute("DELETE FROM " + table_name)
 
         for row_element in table_element:
             column_values = {}
@@ -219,14 +104,14 @@ def import_table(table_name, table_element, connection):
                 column_values[column_name] = column_value
 
             columns = ",".join(column_values.keys())
-            values = ",".join([f"{parse_value(value)}" for value in column_values.values()])
+            values = ",".join([f"{parse_zero_value(value)}" for value in column_values.values()])
             insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({values})"
             insert_query = insert_query.replace("''", "'")
             print("INSERT QUERY:", insert_query)
             cursor.execute(insert_query)
 
         connection.commit()
-        enable_constraints(connection, table_name)  # Włączanie ograniczeń integralności po imporcie
+        enable_constraints(connection, table_name)
     except oracledb.DatabaseError as e:
         connection.rollback()
         raise e
@@ -234,7 +119,8 @@ def import_table(table_name, table_element, connection):
         cursor.close()
 
 
-def parse_value(value):
+# PARSOWANIE ZER I NONE
+def parse_zero_value(value):
     if value == "0.0" or value == "None":
         return "NULL"
     elif value:
@@ -243,7 +129,7 @@ def parse_value(value):
         return "NULL"
 
 
-# Funkcja do parsowania daty w formacie "YYYY-MM-DD"
+# PARSOWANIE DATY
 def parse_date(date_str):
     try:
         date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -252,14 +138,14 @@ def parse_date(date_str):
         return "'" + date_str + "'"
 
 
-# Import button click event
+# PRZYCISK IMPORT
 def import_button_click(connection):
     selected_indices = table_listbox.curselection()
 
     if selected_indices:
-        file_path = filedialog.askopenfilename(initialdir=get_default_import_file_path(), filetypes=[("XML Files", "*.xml")])
+        file_path = filedialog.askopenfilename(initialdir=get_pwd(), filetypes=[("XML Files", "*.xml")])
         if file_path:
-            imported_tables = import_tables_from_xml(file_path, connection)
+            imported_tables = import_tables(file_path, connection)
 
             if imported_tables:
                 table_names = ", ".join(imported_tables)
@@ -268,7 +154,7 @@ def import_button_click(connection):
                 messagebox.showinfo("Błąd", "Wystąpił problem podczas importowania tabel z pliku: " + file_path)
 
 
-# Export button click event
+# PRZYCISK EXPORT
 def export_button_click(connection, main_window):
     selected_indices = table_listbox.curselection()
 
@@ -277,7 +163,7 @@ def export_button_click(connection, main_window):
         file_path = filedialog.asksaveasfilename(defaultextension=".xml", initialfile=default_file_name, filetypes=[("XML Files", "*.xml")])
         if file_path:
             exported_tables = []
-            root = ET.Element("tables")  # Create the root XML element
+            root = ET.Element("tables")
 
             table_order = [
                 "DZIALY_PRODUKTOWE",
@@ -299,11 +185,11 @@ def export_button_click(connection, main_window):
             for i, table_name in enumerate(table_order):
                 if table_name in [table_listbox.get(index) for index in selected_indices]:
                     exported_tables.append(table_name)
-                    export_table_to_xml(table_name, root, connection)
+                    export_table(table_name, root, connection)
                     progress_bar["value"] = i + 1
                     main_window.update()
 
-            progress_bar.destroy()  # Remove the progress bar from the window
+            progress_bar.destroy()
 
             xml_string = ET.tostring(root, encoding="utf-8")
             pretty_xml_string = xml.dom.minidom.parseString(xml_string).toprettyxml(indent="   ")
@@ -315,10 +201,115 @@ def export_button_click(connection, main_window):
             messagebox.showinfo("Sukces", "Tabele " + table_names + " zostały wyeksportowane do pliku: " + file_path)
 
 
-# Tworzenie głównego okna aplikacji
+# WYŁĄCZNIK INTEGRALNOŚCI
+def disable_constraints(connection, table_name):
+    cursor = connection.cursor()
+    try:
+        # nazwy ograniczeń
+        cursor.execute("SELECT constraint_name FROM user_constraints WHERE table_name = :table_name", {"table_name": table_name})
+        constraint_names = [row[0] for row in cursor.fetchall()]
+
+        # wyłączenie tymczasowe ograniczeń
+        for constraint_name in constraint_names:
+            cursor.execute("SELECT table_name, constraint_name FROM user_constraints WHERE r_constraint_name = :constraint_name", {"constraint_name": constraint_name})
+            dependent_constraints = cursor.fetchall()
+
+            for dependent_table, dependent_constraint in dependent_constraints:
+                cursor.execute("ALTER TABLE " + dependent_table + " DROP CONSTRAINT " + dependent_constraint)
+
+            # wyłącz indeksy
+            cursor.execute("SELECT index_name FROM user_constraints WHERE table_name = :table_name AND constraint_name = :constraint_name", {"table_name": table_name, "constraint_name": constraint_name})
+            index_names = [row[0] for row in cursor.fetchall()]
+
+            for index_name in index_names:
+                if index_name is not None:
+                    cursor.execute("ALTER INDEX " + index_name + " UNUSABLE")
+
+            cursor.execute("ALTER TABLE " + table_name + " DISABLE CONSTRAINT " + constraint_name + " CASCADE")
+
+        connection.commit()
+    except oracledb.DatabaseError as e:
+        connection.rollback()
+        raise e
+    finally:
+        cursor.close()
+
+
+# WŁĄCZNIK INTEGRALNOŚCI
+def enable_constraints(connection, table_name):
+    cursor = connection.cursor()
+    try:
+        # nazwy ograniczeń
+        cursor.execute("SELECT constraint_name FROM user_constraints WHERE table_name = :table_name",
+                       {"table_name": table_name})
+        constraint_names = [row[0] for row in cursor.fetchall()]
+
+        # włącz ograniczenia
+        for constraint_name in constraint_names:
+            cursor.execute("ALTER TABLE " + table_name + " ENABLE CONSTRAINT " + constraint_name)
+
+        connection.commit()
+    except oracledb.DatabaseError as e:
+        connection.rollback()
+        raise e
+    finally:
+        cursor.close()
+
+
+# OBSŁUGA LISTY
+def listbox_click(event):
+    selected_indices = table_listbox.curselection()
+
+    if selected_indices:
+        table_listbox.selection_clear(0, tk.END)
+        for index in selected_indices:
+            table_listbox.selection_set(index)
+
+    update_button_state()
+
+
+# BLOKADA PRZYCISKÓW
+def update_button_state():
+    selected_indices = table_listbox.curselection()
+
+    if selected_indices:
+        export_button.config(state=tk.NORMAL)
+        import_button.config(state=tk.NORMAL)
+    else:
+        import_button.config(state=tk.DISABLED)
+        export_button.config(state=tk.DISABLED)
+
+
+# OKNO LOGOWANIA
+def create_login_window():
+    login_window = tk.Tk()
+    login_window.title("Logowanie")
+    login_window.geometry("250x200")
+
+    style = ttk.Style()
+    style.configure("TButton", font=("Arial", 12))
+
+    main_text = tk.Label(login_window, text=f"ORACLE SQL - XML IMP/EXP (v1.0)\n"
+                         f"Autor: Paweł Siemiginowski\n"
+                         f"s101450")
+    main_text.pack(pady=10)
+    password_label = tk.Label(login_window, text="Wprowadź hasło:")
+    password_label.pack()
+
+    password_entry = tk.Entry(login_window, show="*")
+    password_entry.pack(pady=10)
+
+    login_button = ttk.Button(login_window, text="Zaloguj",
+                             command=lambda: connect_to_database(login_window, password_entry.get()))
+    login_button.pack()
+
+    login_window.mainloop()
+
+
+# OKNO GŁÓWNE APKI
 def create_main_window(connection):
     main_window = tk.Tk()
-    main_window.title("Aplikacja")
+    main_window.title("Aplikacja do XML - ORACLE")
     main_window.geometry("800x600")
 
     table_frame = tk.Frame(main_window, bd=2, relief=tk.RAISED)
@@ -332,24 +323,23 @@ def create_main_window(connection):
     table_listbox = tk.Listbox(table_frame, selectmode=tk.MULTIPLE, exportselection=False, width=50, height=15, bd=0,
                                relief=tk.FLAT, font=("Arial", 10))
     table_listbox.pack(side=tk.LEFT, fill=tk.BOTH)
-    table_listbox.bind("<<ListboxSelect>>", listbox_click)  # Przypisanie zdarzenia kliknięcia na element listy
+    table_listbox.bind("<<ListboxSelect>>", listbox_click)
 
     table_scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL)
     table_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     table_listbox.config(yscrollcommand=table_scrollbar.set)
     table_scrollbar.config(command=table_listbox.yview)
 
-    export_button = ttk.Button(main_window, text="Exportuj XML", state=tk.DISABLED,
-                              command=lambda: export_button_click(connection, main_window))
+    export_button = ttk.Button(main_window, text="Eksportuj XML", state=tk.DISABLED,
+                               command=lambda: export_button_click(connection, main_window))
     export_button.pack()
 
     import_button = ttk.Button(main_window, text="Importuj XML", state=tk.DISABLED,
-                              command=lambda: import_button_click(connection))
+                               command=lambda: import_button_click(connection))
     import_button.pack()
 
     update_button_state()
 
-    # Pobieranie listy tabel z bazy danych
     try:
         cursor = connection.cursor()
         cursor.execute("SELECT table_name FROM user_tables")
@@ -364,6 +354,12 @@ def create_main_window(connection):
     main_window.mainloop()
 
 
-# Uruchomienie aplikacji
+# FOLDER
+def get_pwd():
+    default_folder = os.getcwd()
+    return default_folder
+
+
+# MAIN
 if __name__ == "__main__":
     create_login_window()
